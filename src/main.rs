@@ -1,6 +1,5 @@
-use rand::{self, Rng};
-use std::collections::HashMap;
-use std::env::args;
+use rand::{self, seq::SliceRandom, Rng};
+use std::{collections::HashMap, env::args};
 
 const SUDOKU_FIELD: &str = "
 ┏━━━┯━━━┯━━━┳━━━┯━━━┯━━━┳━━━┯━━━┯━━━┓
@@ -38,93 +37,118 @@ const FIELDS: [[usize; 9]; 9] = [
     [60, 61, 62, 69, 70, 71, 78, 79, 80],
 ];
 
-#[allow(dead_code)]
-#[derive(Debug)]
-enum Difficulty {
-    HARD,
-    MEDIUM,
-    EASY,
+struct Grid {
+    sudoku: String,
+    state: [[char; 9]; 9],
+    difficulty: f32,
+    solving: bool,
 }
 
-fn main() {
-    // println!("Sudoku-game:{}", SUDOKU_FIELD);
-    let mut sudoku: String = SUDOKU_FIELD.to_string();
-    let mut state: [[char; 9]; 9] = [['0'; 9]; 9];
-    fill_grid(&mut sudoku, &mut state);
-}
+impl Grid {
+    fn solve(&mut self) -> bool {
+        if let Some((r, c)) = self.find_empty_cell() {
+            let mut rng = rand::thread_rng();
+            let nums = vec![0, 1, 2, 3, 4, 5, 6, 7, 8];
+            let nums: Vec<&usize> = nums.choose_multiple(&mut rng, 9).collect();
 
-fn make_game(difficulty: Difficulty, game: &mut String, game_indices: HashMap<usize, usize>) -> () {
-    let chance: f32;
-    match difficulty {
-        Difficulty::HARD => chance = 0.275,
-        Difficulty::MEDIUM => chance = 0.389,
-        Difficulty::EASY => chance = 0.563,
-    }
-    let mut random = rand::thread_rng();
-
-    println!("Solved: {game}");
-
-    for i in game_indices.keys() {
-        if random.gen_range(0.0..1.0) > chance {
-            game.replace_range(i..&(i + 1), " ");
+            for i in 0..9 {
+                if is_move_valid(self.state, (c + r * 9, NUMBERS[*nums[i]])) {
+                    self.state[r][c] = NUMBERS[*nums[i]];
+                    if self.solve() {
+                        return true;
+                    }
+                    self.state[r][c] = '0';
+                }
+            }
+            return false;
         }
+        true
     }
-    println!("Difficulty: {:?} {game}", difficulty);
-}
-
-fn fill_grid(sudoku: &mut String, state: &mut [[char; 9]; 9]) -> () {
-    let mut random = rand::thread_rng();
-
-    let mut indices: HashMap<usize, usize> = HashMap::new();
-
-    {
+    fn find_empty_cell(&mut self) -> Option<(usize, usize)> {
+        for i in 0..9 {
+            for j in 0..9 {
+                if self.state[i][j] == '0' {
+                    return Some((i, j));
+                }
+            }
+        }
+        return None;
+    }
+    fn create_grid(&mut self) -> () {
         let mut index = 0;
-        for (i, chr) in SUDOKU_FIELD.char_indices() {
-            if chr == '0' {
+        for (i, ch) in self.sudoku.clone().char_indices() {
+            if ch.is_numeric() {
                 let (c, r) = to_col_row(index);
-                indices.insert(i, index);
-                state[r][c] = chr;
+                self.sudoku
+                    .replace_range(i..i + 1, &self.state[r][c].to_string());
                 index += 1;
             }
         }
     }
-    for (i, ch) in SUDOKU_FIELD.char_indices() {
-        if ch == '0' {
-            let true_index = *indices.get(&i).unwrap();
-            let mut num = NUMBERS[random.gen_range(0..=8)];
-            let mut used_num: Vec<char> = Vec::new();
-            while !is_move_valid(*state, (true_index, num)) {
-                if used_num.len() >= 9 {
-                    fill_grid(sudoku, state);
-                    break;
-                }
-                while used_num.contains(&num) {
-                    num = NUMBERS[random.gen_range(0..=8)];
-                }
-                used_num.push(num);
+    fn make_game(&mut self) -> () {
+        let mut rng = rand::thread_rng();
+
+        for (i, ch) in self.sudoku.clone().char_indices() {
+            if ch.is_numeric() && rng.gen_range(0.0..1.0) > self.difficulty {
+                self.sudoku.replace_range(i..i + 1, " ");
             }
-            sudoku.replace_range(i..(i + 1), &String::from(num));
-            let (c, r) = to_col_row(true_index);
-            state[r][c] = num;
         }
     }
+}
+
+fn main() {
+    let mut solving: bool = false;
+    let mut difficulty: f32 = 0.5;
+
     let args: Vec<String> = args().collect();
-    if args.len() < 2 {
-        println!("No arguments given!");
-        std::process::exit(0x0100);
+    if args.len() > 1 {
+        difficulty = args[1].parse().unwrap_or(0.5);
     }
-    let difficulty: Difficulty = match args[1].trim() {
-        "e" => Difficulty::EASY,
-        "m" => Difficulty::MEDIUM,
-        "h" => Difficulty::HARD,
-        _ => {
-            println!("Invalid argument '{}', using easy as difficulty!", args[1]);
-            Difficulty::EASY
+
+    let sudoku: String = match std::fs::read_to_string("./to_be_solved.txt") {
+        Ok(text) => {
+            solving = true;
+            text
         }
+        _ => SUDOKU_FIELD.to_string(),
     };
 
-    make_game(difficulty, sudoku, indices);
-    std::process::exit(0x0100);
+    let state = get_state_from_grid(sudoku.clone());
+
+    let mut sudoku_game = Grid {
+        sudoku,
+        state,
+        difficulty,
+        solving,
+    };
+
+    if sudoku_game.solve() {
+        sudoku_game.create_grid();
+        println!("{}", sudoku_game.sudoku);
+        if !sudoku_game.solving {
+            sudoku_game.make_game();
+            println!("{}", sudoku_game.sudoku);
+        }
+    } else {
+        println!("No solution was found!");
+    }
+}
+
+fn get_state_from_grid(sudoku: String) -> [[char; 9]; 9] {
+    let mut indices: HashMap<usize, usize> = HashMap::new();
+    let mut state: [[char; 9]; 9] = [['0'; 9]; 9];
+    {
+        let mut index = 0;
+        for (i, ch) in sudoku.char_indices() {
+            if ch.is_numeric() {
+                let (c, r) = to_col_row(index);
+                indices.insert(i, index);
+                state[r][c] = ch;
+                index += 1;
+            }
+        }
+    }
+    state
 }
 
 fn to_col_row(i: usize) -> (usize, usize) {
@@ -133,33 +157,33 @@ fn to_col_row(i: usize) -> (usize, usize) {
     (c, r)
 }
 
-fn is_move_valid(field_state: [[char; 9]; 9], (index, chr): (usize, char)) -> bool {
+fn is_move_valid(state: [[char; 9]; 9], (index, chr): (usize, char)) -> bool {
     let (c, r) = to_col_row(index);
 
     if c > 0 {
         for x in 0..c {
-            if field_state[r][x] == chr {
+            if state[r][x] == chr {
                 return false;
             }
         }
     }
     if c < 8 {
         for x in c + 1..=8 {
-            if field_state[r][x] == chr {
+            if state[r][x] == chr {
                 return false;
             }
         }
     }
     if r > 0 {
         for y in 0..r {
-            if field_state[y][c] == chr {
+            if state[y][c] == chr {
                 return false;
             }
         }
     }
     if r < 8 {
         for y in r + 1..=8 {
-            if field_state[y][c] == chr {
+            if state[y][c] == chr {
                 return false;
             }
         }
@@ -169,12 +193,11 @@ fn is_move_valid(field_state: [[char; 9]; 9], (index, chr): (usize, char)) -> bo
         if i.contains(&index) {
             for j in i {
                 let (ct, rt) = to_col_row(j);
-                if field_state[rt][ct] == chr {
+                if state[rt][ct] == chr {
                     return false;
                 }
             }
         }
     }
-
     true
 }
